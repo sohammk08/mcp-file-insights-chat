@@ -13,12 +13,17 @@ import { RiChatAiLine } from "react-icons/ri";
 import { useState, useRef, useEffect } from "react";
 
 function App() {
-  const [inputValue, setInputValue] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [messages, setMessages] = useState([]); // { role: 'user' | 'ai', content: string }
-  const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [messages, setMessages] = useState([]);
+  const [queryCount, setQueryCount] = useState(0);
+  const [inputValue, setInputValue] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [uploadBlocked, setUploadBlocked] = useState(false);
+  const [showLimitBanner, setShowLimitBanner] = useState(false);
+  const [queryLimitReached, setQueryLimitReached] = useState(false);
 
   const handleFileClick = () => fileInputRef.current?.click();
 
@@ -43,9 +48,21 @@ function App() {
 
     const userQuestion = inputValue.trim();
     setInputValue("");
+    setIsConnecting(true);
     setIsLoading(true);
 
-    // Show user message immediately
+    const timeout = setTimeout(() => {
+      if (isConnecting) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "ai",
+            content: "Waking up server... please wait a moment ⏳",
+          },
+        ]);
+      }
+    }, 5000);
+
     setMessages((prev) => [...prev, { role: "user", content: userQuestion }]);
 
     const formData = new FormData();
@@ -61,18 +78,40 @@ function App() {
       const data = await res.json();
 
       if (data.success) {
+        clearTimeout(timeout);
+        setIsConnecting(false);
         setMessages((prev) => [...prev, { role: "ai", content: data.answer }]);
+        setQueryCount((prev) => prev + 1);
+        if (queryCount + 1 >= 5) {
+          setQueryLimitReached(true);
+          setShowLimitBanner(true);
+          setTimeout(() => setShowLimitBanner(false), 5000);
+        }
       } else {
+        clearTimeout(timeout);
+        setIsConnecting(false);
+        if (
+          data.error.includes("upload") ||
+          data.error.includes("Only 1 PDF")
+        ) {
+          setUploadBlocked(true);
+        }
+        if (data.error.includes("query") || data.error.includes("Max 5")) {
+          setQueryLimitReached(true);
+          setShowLimitBanner(true);
+          setTimeout(() => setShowLimitBanner(false), 6000);
+        }
         setMessages((prev) => [
           ...prev,
           { role: "ai", content: `Error: ${data.error}` },
         ]);
       }
     } catch (err) {
-      console.error(err);
+      clearTimeout(timeout);
+      setIsConnecting(false);
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: "Network error — please try again later." },
+        { role: "ai", content: "Network error — trying to connect..." },
       ]);
     }
 
@@ -88,6 +127,22 @@ function App() {
 
   return (
     <div className="bg-black h-screen w-screen flex flex-col text-white">
+      {isConnecting && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
+          <div className="bg-neutral-900 p-8 rounded-2xl text-center">
+            <div className="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-xl">Connecting to server...</p>
+            <p className="text-sm text-gray-400 mt-2">
+              This may take a few seconds
+            </p>
+          </div>
+        </div>
+      )}
+      {showLimitBanner && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg animate-pulse">
+          Daily limit reached: Max 5 questions or 1 upload per day
+        </div>
+      )}
       {/* Header */}
       <div className="flex justify-between mt-8 mx-6">
         <h1 className="flex text-xl font-semibold">
@@ -190,54 +245,85 @@ function App() {
       )}
 
       {/* Input Container Card — EXACTLY YOUR ORIGINAL DESIGN, UNTOUCHED */}
-      <div className="bg-[#1e1e1e] rounded-3xl w-3xl mx-auto mt-auto mb-4 flex flex-col">
-        {selectedFile && (
-          <div className="text-center text-sm text-gray-400 pt-3">
-            Attached: {selectedFile.name}
+      <div
+        className={`relative mt-auto ${
+          queryLimitReached || uploadBlocked ? "pointer-events-none" : ""
+        }`}
+      >
+        <div className="bg-[#1e1e1e] rounded-3xl w-3xl mx-auto mb-4 flex flex-col">
+          {selectedFile && (
+            <div className="flex mx-auto text-center text-sm bg-neutral-700 text-gray-200 py-1 px-2 mt-3 rounded-full">
+              <FaFilePdf className="mr-1 my-auto text-red-500/80" />
+              Attached: {selectedFile.name}
+            </div>
+          )}
+
+          <div className="flex items-center p-2 rounded-full mx-3 mt-3 border-2 border-neutral-700">
+            <button
+              onClick={uploadBlocked ? null : handleFileClick}
+              className={`ml-1 ${
+                uploadBlocked
+                  ? "cursor-not-allowed opacity-50"
+                  : "cursor-pointer"
+              }`}
+              title={
+                uploadBlocked ? "Daily upload limit reached" : "Upload PDF"
+              }
+            >
+              <FiPaperclip className="text-gray-300 text-base" />
+            </button>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept="application/pdf"
+              className="hidden"
+            />
+
+            <input
+              type="text"
+              placeholder="Ask question here"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!queryLimitReached && !isLoading) {
+                    handleSubmit();
+                  }
+                }
+              }}
+              maxLength={250}
+              disabled={queryLimitReached || uploadBlocked}
+              className={`flex-1 outline-none border-none bg-transparent text-base placeholder-gray-300 text-gray-200 mx-3 ${
+                queryLimitReached || uploadBlocked
+                  ? "opacity-50 cursor-not-allowed"
+                  : ""
+              }`}
+            />
+
+            <button
+              onClick={queryLimitReached || isLoading ? null : handleSubmit}
+              disabled={isLoading || queryLimitReached}
+              className={`p-2 rounded-full ml-2 ${
+                queryLimitReached || isLoading
+                  ? "bg-gray-600 opacity-50 cursor-not-allowed"
+                  : "bg-blue-500 hover:bg-blue-600 cursor-pointer"
+              }`}
+            >
+              {isLoading ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <FaArrowUp className="text-sm" />
+              )}
+            </button>
           </div>
-        )}
 
-        <div className="flex items-center p-2 rounded-full mx-3 mt-3 border-2 border-neutral-700">
-          <button onClick={handleFileClick} className="ml-1">
-            <FiPaperclip className="text-gray-300 text-base" />
-          </button>
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept="application/pdf"
-            className="hidden"
-          />
-
-          <input
-            type="text"
-            placeholder="Ask question here"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) =>
-              e.key === "Enter" && !e.shiftKey && handleSubmit()
-            }
-            maxLength={250}
-            className="flex-1 outline-none border-none bg-transparent text-base placeholder-gray-300 text-gray-200 mx-3"
-          />
-
-          <button
-            onClick={handleSubmit}
-            disabled={isLoading}
-            className="p-2 bg-blue-500 text-white rounded-full ml-2 disabled:opacity-50"
-          >
-            {isLoading ? (
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <FaArrowUp className="text-sm" />
-            )}
-          </button>
-        </div>
-
-        <div className="flex justify-between px-3 pb-3 mx-1 mt-2 text-xs text-gray-400">
-          <span>characters: {inputValue.length}/250</span>
-          <span>query limit: 0/5</span>
+          <div className="flex justify-between px-3 pb-3 mx-1 mt-2 text-xs text-gray-400">
+            <span>characters: {inputValue.length}/250</span>
+            <span>queries: {queryCount}/5</span>
+          </div>
         </div>
       </div>
     </div>
