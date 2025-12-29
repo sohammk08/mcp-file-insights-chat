@@ -48,7 +48,7 @@ const globalUploadLimiter = new Ratelimit({
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://ask-my-pdf.vercel.app"],
+    origin: ["http://localhost:5173", "https://ask-my-pdf-sk.vercel.app"],
   })
 );
 app.use(express.json());
