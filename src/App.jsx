@@ -20,7 +20,6 @@ function App() {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [uploadBlocked, setUploadBlocked] = useState(false);
   const [showLimitBanner, setShowLimitBanner] = useState(false);
   const [queryLimitReached, setQueryLimitReached] = useState(false);
@@ -48,22 +47,12 @@ function App() {
 
     const userQuestion = inputValue.trim();
     setInputValue("");
-    setIsConnecting(true);
     setIsLoading(true);
-
-    const timeout = setTimeout(() => {
-      if (isConnecting) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "ai",
-            content: "Waking up server... please wait a moment ⏳",
-          },
-        ]);
-      }
-    }, 5000);
-
-    setMessages((prev) => [...prev, { role: "user", content: userQuestion }]);
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: userQuestion },
+      { role: "ai", content: "loading" }, // Add loading bubble
+    ]);
 
     const formData = new FormData();
     formData.append("pdf", selectedFile);
@@ -78,9 +67,10 @@ function App() {
       const data = await res.json();
 
       if (data.success) {
-        clearTimeout(timeout);
-        setIsConnecting(false);
-        setMessages((prev) => [...prev, { role: "ai", content: data.answer }]);
+        setMessages((prev) => [
+          ...prev.slice(0, -1), // Remove loading
+          { role: "ai", content: data.answer },
+        ]);
         setQueryCount((prev) => prev + 1);
         if (queryCount + 1 >= 5) {
           setQueryLimitReached(true);
@@ -88,8 +78,10 @@ function App() {
           setTimeout(() => setShowLimitBanner(false), 5000);
         }
       } else {
-        clearTimeout(timeout);
-        setIsConnecting(false);
+        setMessages((prev) => [
+          ...prev.slice(0, -1), // Remove loading
+          { role: "ai", content: `Error: ${data.error}` },
+        ]);
         if (
           data.error.includes("upload") ||
           data.error.includes("Only 1 PDF")
@@ -101,16 +93,10 @@ function App() {
           setShowLimitBanner(true);
           setTimeout(() => setShowLimitBanner(false), 6000);
         }
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai", content: `Error: ${data.error}` },
-        ]);
       }
     } catch (err) {
-      clearTimeout(timeout);
-      setIsConnecting(false);
       setMessages((prev) => [
-        ...prev,
+        ...prev.slice(0, -1), // Remove loading
         { role: "ai", content: "Network error — trying to connect..." },
       ]);
     }
@@ -127,17 +113,6 @@ function App() {
 
   return (
     <div className="bg-black h-screen w-screen flex flex-col text-white">
-      {isConnecting && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center">
-          <div className="bg-neutral-900 p-8 rounded-2xl text-center">
-            <div className="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-xl">Connecting to server...</p>
-            <p className="text-sm text-gray-400 mt-2">
-              This may take a few seconds
-            </p>
-          </div>
-        </div>
-      )}
       {showLimitBanner && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-6 py-3 rounded-lg shadow-lg animate-pulse">
           Daily limit reached: Max 5 questions or 1 upload per day
@@ -235,7 +210,17 @@ function App() {
                       : "bg-neutral-800 text-gray-100"
                   }`}
                 >
-                  <p className="text-base whitespace-pre-wrap">{msg.content}</p>
+                  {msg.content === "loading" ? (
+                    <div className="flex space-x-2">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-0"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-300"></div>
+                    </div>
+                  ) : (
+                    <p className="text-base whitespace-pre-wrap">
+                      {msg.content}
+                    </p>
+                  )}
                 </div>
               </div>
             ))}
