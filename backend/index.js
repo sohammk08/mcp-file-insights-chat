@@ -8,6 +8,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const SESSION_TTL = 24 * 60 * 60; // 24 hours in seconds
 
 // Upstash Redis
 const redis = new Redis({
@@ -21,6 +22,14 @@ const ipUploadLimiter = new Ratelimit({
   limiter: Ratelimit.slidingWindow(1, "24 h"),
   prefix: "ratelimit:ip_upload",
 });
+
+async function storePDFSession(sessionId, pdfText) {
+  await redis.set(`pdf_session:${sessionId}`, pdfText, { ex: SESSION_TTL });
+}
+
+async function getPDFSession(sessionId) {
+  return await redis.get(`pdf_session:${sessionId}`);
+}
 
 const ipQueryLimiter = new Ratelimit({
   redis,
@@ -59,8 +68,8 @@ const upload = multer({
 // Health check
 app.get("/health", (req, res) => res.send("OK"));
 
-// Main endpoint
-app.post("/api/query", upload.single("pdf"), async (req, res) => {
+// UPLOAD endpoint - handles PDF upload once
+app.post("/api/upload", upload.single("pdf"), async (req, res) => {
   const ip = req.ip || req.headers["x-forwarded-for"] || "anonymous";
 
   try {
@@ -80,32 +89,63 @@ app.post("/api/query", upload.single("pdf"), async (req, res) => {
       });
     }
 
-    // 3. Per-IP query limit (5/day) — only if PDF uploaded
-    if (req.file) {
-      const ipQueryResult = await ipQueryLimiter.limit(ip);
-      if (!ipQueryResult.success) {
-        return res.status(429).json({
-          error: "Daily query limit reached: Max 5 questions per day.",
-        });
-      }
+    // Validation
+    if (!req.file) {
+      return res.status(400).json({ error: "PDF file is required" });
     }
 
+    // Process PDF
+    const pdfParse = (await import("pdf-parse")).default;
+    const pdfData = await pdfParse(req.file.buffer);
+    const pdfText = pdfData.text.slice(0, 30000);
+
+    // Generate sessionId and store in Redis
+    const sessionId = `${ip}_${Date.now()}`;
+    await storePDFSession(sessionId, pdfText);
+
+    res.json({ success: true, sessionId });
+  } catch (error) {
+    console.error("Upload Error:", error);
+    const errorMessage =
+      error.response?.data?.error?.message || error.message || "Server error";
+    res.status(500).json({ error: errorMessage });
+  }
+});
+
+// QUERY endpoint - handles questions using sessionId
+app.post("/api/query", async (req, res) => {
+  const ip = req.ip || req.headers["x-forwarded-for"] || "anonymous";
+
+  try {
+    const { sessionId, question } = req.body;
+
     // Validation
-    const { question } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: "Session ID is required" });
+    }
     if (!question || question.trim().length === 0 || question.length > 250) {
       return res
         .status(400)
         .json({ error: "Question must be 1–250 characters" });
     }
-    if (!req.file) {
-      return res.status(400).json({ error: "PDF file is required" });
+
+    // Per-IP query limit (5/day)
+    const ipQueryResult = await ipQueryLimiter.limit(ip);
+    if (!ipQueryResult.success) {
+      return res.status(429).json({
+        error: "Daily query limit reached: Max 5 questions per day.",
+      });
     }
 
-    // Process PDF + Groq
-    const pdfParse = (await import("pdf-parse")).default;
-    const pdfData = await pdfParse(req.file.buffer);
-    const pdfText = pdfData.text.slice(0, 30000);
+    // Retrieve PDF text from Redis
+    const pdfText = await getPDFSession(sessionId);
+    if (!pdfText) {
+      return res.status(404).json({
+        error: "Session expired or invalid. Please re-upload your PDF.",
+      });
+    }
 
+    // Query Groq
     const groqRes = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -134,7 +174,7 @@ app.post("/api/query", upload.single("pdf"), async (req, res) => {
     const answer = groqRes.data.choices[0].message.content.trim();
     res.json({ success: true, answer });
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Query Error:", error);
     const errorMessage =
       error.response?.data?.error?.message || error.message || "Server error";
     res.status(500).json({ error: errorMessage });

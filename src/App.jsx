@@ -16,31 +16,86 @@ function App() {
   const chatEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const [messages, setMessages] = useState([]);
-  const [queryCount, setQueryCount] = useState(0);
+  const [sessionId, setSessionId] = useState(null);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadBlocked, setUploadBlocked] = useState(false);
   const [showLimitBanner, setShowLimitBanner] = useState(false);
-  const [queryLimitReached, setQueryLimitReached] = useState(false);
+
+  // Initialize state with localStorage values directly
+  const [uploadBlocked, setUploadBlocked] = useState(
+    () => localStorage.getItem("uploadBlocked") === "true"
+  );
+  const [queryLimitReached, setQueryLimitReached] = useState(
+    () => localStorage.getItem("queryLimitReached") === "true"
+  );
+  const [queryCount, setQueryCount] = useState(() =>
+    parseInt(localStorage.getItem("queryCount") || "0")
+  );
+
+  // Save limits to localStorage when they change
+  useEffect(() => {
+    localStorage.setItem("uploadBlocked", uploadBlocked);
+    localStorage.setItem("queryLimitReached", queryLimitReached);
+    localStorage.setItem("queryCount", queryCount.toString());
+  }, [uploadBlocked, queryLimitReached, queryCount]);
 
   const handleFileClick = () => fileInputRef.current?.click();
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
       if (file.size > 10 * 1024 * 1024) {
         alert("File too large — max 10MB");
         return;
       }
+
       setSelectedFile(file);
       setMessages([]);
+      setIsLoading(true);
+
+      // Upload PDF and get sessionId
+      const formData = new FormData();
+      formData.append("pdf", file);
+
+      try {
+        const API_URL = import.meta.env.VITE_API_URL;
+        const res = await fetch(`${API_URL}/api/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          setSessionId(data.sessionId);
+          setMessages([
+            {
+              role: "ai",
+              content: "PDF uploaded successfully! Ask me anything about it.",
+            },
+          ]);
+        } else {
+          alert(`Upload failed: ${data.error}`);
+          setSelectedFile(null);
+          if (
+            data.error.includes("upload") ||
+            data.error.includes("Only 1 PDF")
+          ) {
+            setUploadBlocked(true);
+          }
+        }
+      } catch (err) {
+        alert("Network error during upload");
+        setSelectedFile(null);
+      }
+
+      setIsLoading(false);
     }
   };
 
   const handleSubmit = async () => {
     if (!inputValue.trim()) return;
-    if (!selectedFile && messages.length === 0) {
+    if (!sessionId) {
       alert("Please upload a PDF first");
       return;
     }
@@ -51,24 +106,24 @@ function App() {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: userQuestion },
-      { role: "ai", content: "loading" }, // Add loading bubble
+      { role: "ai", content: "loading" },
     ]);
-
-    const formData = new FormData();
-    formData.append("pdf", selectedFile);
-    formData.append("question", userQuestion);
 
     try {
       const API_URL = import.meta.env.VITE_API_URL;
       const res = await fetch(`${API_URL}/api/query`, {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          question: userQuestion,
+        }),
       });
       const data = await res.json();
 
       if (data.success) {
         setMessages((prev) => [
-          ...prev.slice(0, -1), // Remove loading
+          ...prev.slice(0, -1),
           { role: "ai", content: data.answer },
         ]);
         setQueryCount((prev) => prev + 1);
@@ -79,24 +134,23 @@ function App() {
         }
       } else {
         setMessages((prev) => [
-          ...prev.slice(0, -1), // Remove loading
+          ...prev.slice(0, -1),
           { role: "ai", content: `Error: ${data.error}` },
         ]);
-        if (
-          data.error.includes("upload") ||
-          data.error.includes("Only 1 PDF")
-        ) {
-          setUploadBlocked(true);
-        }
         if (data.error.includes("query") || data.error.includes("Max 5")) {
           setQueryLimitReached(true);
           setShowLimitBanner(true);
           setTimeout(() => setShowLimitBanner(false), 6000);
         }
+        if (data.error.includes("Session expired")) {
+          setSessionId(null);
+          setSelectedFile(null);
+          setUploadBlocked(false);
+        }
       }
     } catch (err) {
       setMessages((prev) => [
-        ...prev.slice(0, -1), // Remove loading
+        ...prev.slice(0, -1),
         { role: "ai", content: "Network error — trying to connect..." },
       ]);
     }
