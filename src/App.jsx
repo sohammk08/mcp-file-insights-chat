@@ -40,8 +40,10 @@ function App() {
     localStorage.setItem("queryCount", queryCount.toString());
   }, [uploadBlocked, queryLimitReached, queryCount]);
 
+  // Click handler for paperclip icon (file upload)
   const handleFileClick = () => fileInputRef.current?.click();
 
+  // Handle PDF selection and upload to backend endpoint (/api/upload)
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -49,7 +51,6 @@ function App() {
         alert("File too large — max 10MB");
         return;
       }
-
       setSelectedFile(file);
       setMessages([]);
       setIsLoading(true);
@@ -93,6 +94,7 @@ function App() {
     }
   };
 
+  // Handle sending a question to endpoint (/api/query)
   const handleSubmit = async () => {
     if (!inputValue.trim()) return;
     if (!sessionId) {
@@ -176,7 +178,7 @@ function App() {
       <div className="flex justify-between mt-8 mx-6">
         <h1 className="flex text-xl font-semibold">
           <RiChatAiLine className="mr-2 mt-1 text-2xl" />
-          MCP File Insights Chat
+          AskMyPDF
         </h1>
         <span className="flex justify-center items-center bg-neutral-700 px-3 py-2 rounded-lg text-sm font-doto">
           Created by Sohamm Kulkarni
@@ -283,7 +285,7 @@ function App() {
         </div>
       )}
 
-      {/* Input Container Card — EXACTLY YOUR ORIGINAL DESIGN, UNTOUCHED */}
+      {/* Input Container Card */}
       <div
         className={`relative mt-auto ${
           queryLimitReached || uploadBlocked ? "pointer-events-none" : ""

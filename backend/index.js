@@ -7,9 +7,9 @@ import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 
 const app = express();
-app.set("trust proxy", true); // ← ADD THIS LINE
+app.set("trust proxy", true);
 const PORT = process.env.PORT || 5000;
-const SESSION_TTL = 24 * 60 * 60; // 24 hours in seconds
+const SESSION_TTL = 30 * 60; // 30 minutes
 
 // Upstash Redis
 const redis = new Redis({
@@ -48,10 +48,7 @@ const globalUploadLimiter = new Ratelimit({
 // Middleware
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "https://mcp-file-insights-chat.vercel.app",
-    ],
+    origin: ["http://localhost:5173", "https://ask-my-pdf.vercel.app"],
   })
 );
 app.use(express.json());
